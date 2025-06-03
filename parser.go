@@ -36,6 +36,7 @@ func (c *CommentList) Capture(values []string) error {
 // Node is the the interface implemented by all AST nodes.
 type Node interface {
 	Position() Position
+	EndPosition() Position
 	Detach() bool
 	children() (children []Node)
 }
@@ -64,7 +65,8 @@ func (e Entries) MarshalJSON() ([]byte, error) {
 
 // AST for HCL.
 type AST struct {
-	Pos lexer.Position `parser:""`
+	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 
 	Entries          Entries     `parser:"@@*"`
 	TrailingComments CommentList `parser:"@Comment*"`
@@ -80,6 +82,7 @@ func (a *AST) Clone() *AST {
 	}
 	out := &AST{
 		Pos:              a.Pos,
+		EndPos:           a.EndPos,
 		TrailingComments: cloneStrings(a.TrailingComments),
 		Schema:           a.Schema,
 	}
@@ -91,7 +94,8 @@ func (a *AST) Clone() *AST {
 	return out
 }
 
-func (a *AST) Position() Position { return a.Pos }
+func (a *AST) Position() Position    { return a.Pos }
+func (a *AST) EndPosition() Position { return a.EndPos }
 
 func (a *AST) children() (children []Node) {
 	for _, entry := range a.Entries {
@@ -112,6 +116,7 @@ type Entry interface {
 type RecursiveEntry struct{}
 
 func (*RecursiveEntry) Position() Position          { return Position{} }
+func (*RecursiveEntry) EndPosition() Position       { return Position{} }
 func (*RecursiveEntry) children() (children []Node) { return nil }
 func (*RecursiveEntry) Clone() Entry                { return &RecursiveEntry{} }
 func (*RecursiveEntry) Detach() bool                { return false }
@@ -122,6 +127,7 @@ var _ Entry = &RecursiveEntry{}
 // Attribute is a key=value attribute.
 type Attribute struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Comments CommentList `parser:"@Comment*"`
@@ -136,9 +142,10 @@ type Attribute struct {
 
 var _ Entry = &Attribute{}
 
-func (a *Attribute) Detach() bool       { return detachEntry(a.Parent, a) }
-func (a *Attribute) Position() Position { return a.Pos }
-func (a *Attribute) EntryKey() string   { return a.Key }
+func (a *Attribute) Detach() bool          { return detachEntry(a.Parent, a) }
+func (a *Attribute) Position() Position    { return a.Pos }
+func (a *Attribute) EndPosition() Position { return a.EndPos }
+func (a *Attribute) EntryKey() string      { return a.Key }
 func (a *Attribute) children() (children []Node) {
 	return []Node{a.Value, a.Default}
 }
@@ -153,6 +160,7 @@ func (a *Attribute) Clone() Entry {
 	}
 	return &Attribute{
 		Pos:      a.Pos,
+		EndPos:   a.EndPos,
 		Comments: cloneStrings(a.Comments),
 		Key:      a.Key,
 		Value:    a.Value.Clone(),
@@ -163,6 +171,7 @@ func (a *Attribute) Clone() Entry {
 // Block represents am optionally labelled HCL block.
 type Block struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Comments CommentList `parser:"@Comment*"`
@@ -177,7 +186,8 @@ type Block struct {
 
 var _ Entry = &Block{}
 
-func (b *Block) Position() Position { return b.Pos }
+func (b *Block) Position() Position    { return b.Pos }
+func (b *Block) EndPosition() Position { return b.EndPos }
 
 // EntryKey implements Entry
 func (b *Block) EntryKey() string { return b.Name }
@@ -201,6 +211,7 @@ func (b *Block) Clone() Entry {
 	}
 	out := &Block{
 		Pos:              b.Pos,
+		EndPos:           b.EndPos,
 		Comments:         cloneStrings(b.Comments),
 		Name:             b.Name,
 		Labels:           cloneStrings(b.Labels),
@@ -217,6 +228,7 @@ func (b *Block) Clone() Entry {
 // MapEntry represents a key+value in a map.
 type MapEntry struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Comments []string `parser:"@Comment*"`
@@ -239,7 +251,8 @@ func (e *MapEntry) Detach() bool {
 	return false
 }
 
-func (e *MapEntry) Position() Position { return e.Pos }
+func (e *MapEntry) Position() Position    { return e.Pos }
+func (e *MapEntry) EndPosition() Position { return e.EndPos }
 
 func (e *MapEntry) children() (children []Node) {
 	return []Node{e.Key, e.Value}
@@ -252,6 +265,7 @@ func (e *MapEntry) Clone() *MapEntry {
 	}
 	return &MapEntry{
 		Pos:      e.Pos,
+		EndPos:   e.EndPos,
 		Key:      e.Key.Clone(),
 		Value:    e.Value.Clone(),
 		Comments: cloneStrings(e.Comments),
@@ -261,6 +275,7 @@ func (e *MapEntry) Clone() *MapEntry {
 // Bool represents a parsed boolean value.
 type Bool struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Bool bool `parser:"@'true':Ident | 'false':Ident"`
@@ -269,7 +284,8 @@ type Bool struct {
 var _ Value = &Bool{}
 
 func (b *Bool) Detach() bool                { return false }
-func (b *Bool) Position() lexer.Position    { return b.Pos }
+func (b *Bool) Position() Position          { return b.Pos }
+func (b *Bool) EndPosition() Position       { return b.EndPos }
 func (b *Bool) children() (children []Node) { return nil }
 func (b *Bool) Clone() Value                { clone := *b; return &clone }
 func (b *Bool) String() string              { return strconv.FormatBool(b.Bool) }
@@ -282,6 +298,7 @@ var needsOctalPrefix = regexp.MustCompile(`^0\d+$`)
 // Number of arbitrary precision.
 type Number struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Float *big.Float `parser:"@Number"`
@@ -290,7 +307,8 @@ type Number struct {
 var _ Value = &Number{}
 
 func (n *Number) Detach() bool                { return false }
-func (n *Number) Position() lexer.Position    { return n.Pos }
+func (n *Number) Position() Position          { return n.Pos }
+func (n *Number) EndPosition() Position       { return n.EndPos }
 func (n *Number) children() (children []Node) { return nil }
 func (n *Number) Clone() Value {
 	clone := *n
@@ -329,6 +347,7 @@ type Value interface {
 // Type of a Value.
 type Type struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Type string `parser:"@('string':Ident | 'number':Ident | 'boolean':Ident)"`
@@ -340,12 +359,14 @@ func (t *Type) value()                      {}
 func (t *Type) Clone() Value                { clone := *t; return &clone }
 func (t *Type) String() string              { return t.Type }
 func (t *Type) Detach() bool                { return false }
-func (t *Type) Position() lexer.Position    { return t.Pos }
+func (t *Type) Position() Position          { return t.Pos }
+func (t *Type) EndPosition() Position       { return t.EndPos }
 func (t *Type) children() (children []Node) { return nil }
 
 // Call represents a function call.
 type Call struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Args []Value `parser:"'(' @@ ( ',' @@ )* ')'"`
@@ -371,8 +392,9 @@ func (f *Call) String() string {
 	}
 	return fmt.Sprintf("(%s)", strings.Join(args, ", "))
 }
-func (f *Call) Detach() bool             { return false }
-func (f *Call) Position() lexer.Position { return f.Pos }
+func (f *Call) Detach() bool          { return false }
+func (f *Call) Position() Position    { return f.Pos }
+func (f *Call) EndPosition() Position { return f.EndPos }
 func (f *Call) children() (children []Node) {
 	out := make([]Node, len(f.Args))
 	for i, arg := range f.Args {
@@ -384,6 +406,7 @@ func (f *Call) children() (children []Node) {
 // String literal.
 type String struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Str string `parser:"@(String | Ident)"`
@@ -394,13 +417,15 @@ var _ Value = &String{}
 func (s *String) Clone() Value                { clone := *s; return &clone }
 func (s *String) String() string              { return strconv.Quote(s.Str) }
 func (s *String) Detach() bool                { return false }
-func (s *String) Position() lexer.Position    { return s.Pos }
+func (s *String) Position() Position          { return s.Pos }
+func (s *String) EndPosition() Position       { return s.EndPos }
 func (s *String) children() (children []Node) { return nil }
 func (s *String) value()                      {}
 
 // Heredoc represents a heredoc string.
 type Heredoc struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Delimiter string `parser:"(@Heredoc"`
@@ -415,7 +440,8 @@ func (h *Heredoc) String() string {
 }
 func (h *Heredoc) value()                      {}
 func (h *Heredoc) Detach() bool                { return false }
-func (h *Heredoc) Position() lexer.Position    { return h.Pos }
+func (h *Heredoc) Position() Position          { return h.Pos }
+func (h *Heredoc) EndPosition() Position       { return h.EndPos }
 func (h *Heredoc) children() (children []Node) { return nil }
 
 // GetHeredoc gets the heredoc as a string.
@@ -432,6 +458,7 @@ func (h *Heredoc) GetHeredoc() string {
 // A List of values.
 type List struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	List []Value `parser:"( '[' ( @@ ( ',' @@ )* )? ','? ']' )"`
@@ -462,13 +489,15 @@ func (l *List) String() string {
 var _ Value = &List{}
 
 func (l *List) Detach() bool                { return false }
-func (l *List) Position() lexer.Position    { return l.Pos }
+func (l *List) Position() Position          { return l.Pos }
+func (l *List) EndPosition() Position       { return l.EndPos }
 func (l *List) children() (children []Node) { return nil }
 func (l *List) value()                      {}
 
 // A Map of key to value.
 type Map struct {
 	Pos    lexer.Position `parser:""`
+	EndPos lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
 	Entries []*MapEntry `parser:"( '{' ( @@ ( ',' @@ )* ','? )? '}' )"`
@@ -497,8 +526,9 @@ func (m *Map) String() string {
 
 var _ Value = &Map{}
 
-func (m *Map) Detach() bool             { return false }
-func (m *Map) Position() lexer.Position { return m.Pos }
+func (m *Map) Detach() bool          { return false }
+func (m *Map) Position() Position    { return m.Pos }
+func (m *Map) EndPosition() Position { return m.EndPos }
 func (m *Map) children() (children []Node) {
 	for _, entry := range m.Entries {
 		children = append(children, entry)

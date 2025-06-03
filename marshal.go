@@ -378,9 +378,10 @@ func valueFromTag(f field, defaultValue string) (Value, error) {
 			}
 			// so that we deduplicate the keys, last one up
 			mEntries[pair[0]] = &MapEntry{
-				Pos:   lexer.Position{},
-				Key:   key,
-				Value: val,
+				Pos:    lexer.Position{},
+				EndPos: lexer.Position{},
+				Key:    key,
+				Value:  val,
 			}
 		}
 

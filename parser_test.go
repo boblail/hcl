@@ -307,6 +307,7 @@ func normaliseAST(hcl *AST) {
 		return
 	}
 	hcl.Pos = lexer.Position{}
+	hcl.EndPos = lexer.Position{}
 	normaliseEntries(hcl.Entries)
 }
 
@@ -315,11 +316,13 @@ func normaliseEntries(entries []Entry) {
 		switch entry := entry.(type) {
 		case *Block:
 			entry.Pos = lexer.Position{}
+			entry.EndPos = lexer.Position{}
 			entry.Parent = nil
 			normaliseEntries(entry.Body)
 
 		case *Attribute:
 			entry.Pos = lexer.Position{}
+			entry.EndPos = lexer.Position{}
 			entry.Parent = nil
 			val := entry.Value
 			normaliseValue(val)
@@ -338,12 +341,14 @@ func normaliseValue(val Value) {
 	}
 	rv = reflect.Indirect(rv)
 	rv.FieldByName("Pos").Set(reflect.ValueOf(lexer.Position{}))
+	rv.FieldByName("EndPos").Set(reflect.ValueOf(lexer.Position{}))
 	parent := rv.FieldByName("Parent")
 	parent.Set(reflect.Zero(parent.Type()))
 	switch val := val.(type) {
 	case *Map:
 		for _, entry := range val.Entries {
 			entry.Pos = lexer.Position{}
+			entry.EndPos = lexer.Position{}
 			entry.Parent = nil
 			normaliseValue(entry.Key)
 			normaliseValue(entry.Value)
