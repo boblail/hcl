@@ -1,4 +1,4 @@
-module github.com/alecthomas/hcl/v2
+module github.com/boblail/hcl/v2
 
 go 1.18
 
