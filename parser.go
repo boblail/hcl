@@ -126,7 +126,7 @@ type Attribute struct {
 	Pos    lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
-	Comments CommentList `parser:"@Comment*"`
+	Comments CommentList
 
 	Key   string `parser:"@Ident"`
 	Value Value  `parser:"( '=':Punct @@ )?"`
@@ -193,7 +193,7 @@ type Block struct {
 	Pos    lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
-	Comments CommentList `parser:"@Comment*"`
+	Comments CommentList
 
 	Name     string   `parser:"@Ident"`
 	Repeated bool     `parser:"( '(' @'repeated' ')' )?"`
@@ -543,7 +543,7 @@ var (
 			{"Heredoc", `<<[-]?(\w+\b)`, lexer.Push("Heredoc")},
 			{"String", `"(\\\d\d\d|\\.|[^"])*"|'(\\\d\d\d|\\.|[^'])*'`, nil},
 			{"Punct", `[][*?{}=:,()|]`, nil},
-			{"Comment", `(?:(?://|#)[^\n]*(?:\n\s*(?://|#)[^\n]*)*)|/\*.*?\*/`, nil},
+			{"Comment", `(?:(?://|#)[^\n]*(?:\n[ \t]*(?://|#)[^\n]*)*)|/\*.*?\*/`, nil},
 			{"Whitespace", `\s+`, nil},
 		},
 		"Heredoc": {
@@ -703,6 +703,12 @@ func (config *parseConfig) postProccessAST(hcl *AST) (*AST, error) {
 		return nil, err
 	}
 
+	// Always process comments to attach them appropriately
+	err = populateAttachedComments(hcl)
+	if err != nil {
+		return nil, err
+	}
+
 	err = populateTrailingComments(hcl)
 	if err != nil {
 		return nil, err
@@ -747,6 +753,74 @@ func cloneStrings(strings []string) []string {
 	out := make([]string, len(strings))
 	copy(out, strings)
 	return out
+}
+
+// populateAttachedComments moves immediately adjacent comments to their following entries.
+// Comments that immediately precede a block/attribute (without blank lines) are "attached" and
+// should be moved to the Comments field of that block/attribute. Comments separated by blank lines
+// remain as standalone Comment entries.
+func populateAttachedComments(ast *AST) error {
+	populateAttachedCommentsInEntries(&ast.Entries)
+
+	return Visit(ast, func(node Node, next func() error) error {
+		if block, ok := node.(*Block); ok {
+			populateAttachedCommentsInEntries(&block.Body)
+		}
+		return next()
+	})
+}
+
+// populateAttachedCommentsInEntries processes a slice of entries to handle attached vs detached comments
+func populateAttachedCommentsInEntries(entries *Entries) {
+	if entries == nil || len(*entries) == 0 {
+		return
+	}
+
+	newEntries := make(Entries, 0, len(*entries))
+
+	for i, entry := range *entries {
+		if comment, ok := entry.(*Comment); ok {
+			// Check if next entry exists and is immediately adjacent
+			if i+1 < len(*entries) {
+				nextEntry := (*entries)[i+1]
+				if isImmediatelyAdjacent(comment, nextEntry) {
+					// Attach comment to next entry
+					attachComment(comment, nextEntry)
+					continue // Skip adding as standalone
+				}
+			}
+			// Keep as detached comment
+			newEntries = append(newEntries, entry)
+		} else {
+			// Non-comment entry, add it
+			newEntries = append(newEntries, entry)
+		}
+	}
+
+	*entries = newEntries
+}
+
+// isImmediatelyAdjacent determines if a comment is immediately adjacent to the following entry
+func isImmediatelyAdjacent(comment *Comment, nextEntry Entry) bool {
+	// Since the lexer already separates comments by blank lines,
+	// if two entries are consecutive in the parsed list and their
+	// line positions are close, they're adjacent
+	commentEndLine := comment.Position().Line
+	nextStartLine := nextEntry.Position().Line
+
+	// Allow for the comment ending and next entry starting on consecutive lines
+	// or the same line (though same line shouldn't happen in practice)
+	return nextStartLine-commentEndLine <= 1
+}
+
+// attachComment attaches a comment to a block or attribute
+func attachComment(comment *Comment, entry Entry) {
+	switch e := entry.(type) {
+	case *Block:
+		e.Comments = append(e.Comments, comment.Comments...)
+	case *Attribute:
+		e.Comments = append(e.Comments, comment.Comments...)
+	}
 }
 
 func detachEntry(parent Node, entry Entry) bool {

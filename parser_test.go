@@ -285,6 +285,23 @@ EOF
 				},
 				TrailingComments: []string{"trailing comment"},
 			}},
+		{name: "DetachedComments",
+			hcl: `
+					// detached comment 1
+
+					// detached comment 2
+
+					// attached comment
+					block {}
+				`,
+			expected: hcl(
+				&Comment{Comments: []string{"detached comment 1"}},
+				&Comment{Comments: []string{"detached comment 2"}},
+				&Block{
+					Name:     "block",
+					Comments: []string{"attached comment"},
+				},
+			)},
 		{name: "AttributeWithoutValue",
 			hcl: `
 				attr

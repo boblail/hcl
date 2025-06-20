@@ -458,6 +458,24 @@ func TestMarshalAST(t *testing.T) {
 				},
 			),
 		},
+		{
+			name: "BlockWithDetachedCommentsAheadOfIt",
+			expected: `// detached comment 1
+
+// detached comment 2
+
+// attached comment
+block {}
+`,
+			ast: hcl(
+				&Comment{Comments: []string{"detached comment 1"}},
+				&Comment{Comments: []string{"detached comment 2"}},
+				&Block{
+					Name:     "block",
+					Comments: []string{"attached comment"},
+				},
+			),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -559,7 +559,8 @@ func marshalAST(w io.Writer, indent string, node *AST) error {
 }
 
 func marshalEntries(w io.Writer, indent string, entries []Entry) error {
-	prevAttr := true
+	prevAttr := false
+	prevComment := false
 	for i, entry := range entries {
 		switch entry := entry.(type) {
 		case *Block:
@@ -570,27 +571,32 @@ func marshalEntries(w io.Writer, indent string, entries []Entry) error {
 				return err
 			}
 			prevAttr = false
+			prevComment = false
 
 		case *Attribute:
-			if !prevAttr {
+			if i > 0 && !prevAttr {
 				fmt.Fprintln(w)
 			}
 			if err := marshalAttribute(w, indent, entry); err != nil {
 				return err
 			}
 			prevAttr = true
+			prevComment = false
 
 		case *Comment:
-			if prevAttr {
+			if i > 0 && (prevAttr || prevComment) {
 				fmt.Fprintln(w)
 			}
 			if err := marshalComments(w, indent, entry.Comments); err != nil {
 				return err
 			}
 			prevAttr = false
+			prevComment = true
 
 		case *RecursiveEntry:
 			fmt.Fprintf(w, "%s// (recursive)\n", indent)
+			prevAttr = false
+			prevComment = false
 
 		default:
 			panic("??")
