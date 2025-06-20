@@ -126,7 +126,7 @@ type Attribute struct {
 	Pos    lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
-	Comments CommentList `parser:"@Comment*"`
+	Comments CommentList
 
 	Key   string `parser:"@Ident"`
 	Value Value  `parser:"( '=':Punct @@ )?"`
@@ -193,7 +193,7 @@ type Block struct {
 	Pos    lexer.Position `parser:""`
 	Parent Node           `parser:""`
 
-	Comments CommentList `parser:"@Comment*"`
+	Comments CommentList
 
 	Name     string   `parser:"@Ident"`
 	Repeated bool     `parser:"( '(' @'repeated' ')' )?"`
@@ -543,7 +543,7 @@ var (
 			{"Heredoc", `<<[-]?(\w+\b)`, lexer.Push("Heredoc")},
 			{"String", `"(\\\d\d\d|\\.|[^"])*"|'(\\\d\d\d|\\.|[^'])*'`, nil},
 			{"Punct", `[][*?{}=:,()|]`, nil},
-			{"Comment", `(?:(?://|#)[^\n]*(?:\n\s*(?://|#)[^\n]*)*)|/\*.*?\*/`, nil},
+			{"Comment", `(?:(?://|#)[^\n]*(?:\n[ \t]*(?://|#)[^\n]*)*)|/\*.*?\*/`, nil},
 			{"Whitespace", `\s+`, nil},
 		},
 		"Heredoc": {
@@ -606,33 +606,53 @@ func cleanHeredocStart(token lexer.Token) (lexer.Token, error) {
 
 // populateTrailingComments copies trailing comments from Comment nodes to TrailingComments fields.
 func populateTrailingComments(ast *AST) error {
-	populateTrailingCommentsInEntries(ast.Entries, &ast.TrailingComments)
+	populateTrailingCommentsInEntries(&ast.Entries, &ast.TrailingComments)
 
 	return Visit(ast, func(node Node, next func() error) error {
 		if block, ok := node.(*Block); ok {
-			populateTrailingCommentsInEntries(block.Body, &block.TrailingComments)
+			populateTrailingCommentsInEntries(&block.Body, &block.TrailingComments)
 		}
 		return next()
 	})
 }
 
 // populateTrailingCommentsInEntries finds trailing Comment nodes and copies their comments
-func populateTrailingCommentsInEntries(entries Entries, trailingComments *CommentList) {
-	// Find the last non-comment entry index
+func populateTrailingCommentsInEntries(entries *Entries, trailingComments *CommentList) {
+	if entries == nil || len(*entries) == 0 {
+		return
+	}
+
+	// Track which comments should be removed (consumed as trailing comments)
+	toRemove := make(map[int]bool)
+
+	// Find the last non-comment entry index for overall trailing comments
 	lastNonCommentIndex := -1
-	for i := len(entries) - 1; i >= 0; i-- {
-		if _, isComment := entries[i].(*Comment); !isComment {
+	for i := len(*entries) - 1; i >= 0; i-- {
+		if _, isComment := (*entries)[i].(*Comment); !isComment {
 			lastNonCommentIndex = i
 			break
 		}
 	}
 
 	// Collect all trailing comments (comments after the last non-comment entry)
-	for i := lastNonCommentIndex + 1; i < len(entries); i++ {
-		if comment, ok := entries[i].(*Comment); ok {
+	// and mark them for removal as well
+	for i := lastNonCommentIndex + 1; i < len(*entries); i++ {
+		if comment, ok := (*entries)[i].(*Comment); ok {
 			*trailingComments = append(*trailingComments, comment.Comments...)
+			toRemove[i] = true
 		}
 	}
+
+	// Create new entries list without the consumed trailing comments
+	newEntries := make(Entries, 0, len(*entries))
+	for i, entry := range *entries {
+		if !toRemove[i] {
+			newEntries = append(newEntries, entry)
+		}
+	}
+
+	// Update the entries slice
+	*entries = newEntries
 }
 
 // ParseOption represents a functional option for Parse, ParseString, and ParseBytes.
@@ -703,6 +723,12 @@ func (config *parseConfig) postProccessAST(hcl *AST) (*AST, error) {
 		return nil, err
 	}
 
+	// Always process comments to attach them appropriately
+	err = populateAttachedComments(hcl)
+	if err != nil {
+		return nil, err
+	}
+
 	err = populateTrailingComments(hcl)
 	if err != nil {
 		return nil, err
@@ -747,6 +773,74 @@ func cloneStrings(strings []string) []string {
 	out := make([]string, len(strings))
 	copy(out, strings)
 	return out
+}
+
+// populateAttachedComments moves immediately adjacent comments to their following entries.
+// Comments that immediately precede a block/attribute (without blank lines) are "attached" and
+// should be moved to the Comments field of that block/attribute. Comments separated by blank lines
+// remain as standalone Comment entries.
+func populateAttachedComments(ast *AST) error {
+	populateAttachedCommentsInEntries(&ast.Entries)
+
+	return Visit(ast, func(node Node, next func() error) error {
+		if block, ok := node.(*Block); ok {
+			populateAttachedCommentsInEntries(&block.Body)
+		}
+		return next()
+	})
+}
+
+// populateAttachedCommentsInEntries processes a slice of entries to handle attached vs detached comments
+func populateAttachedCommentsInEntries(entries *Entries) {
+	if entries == nil || len(*entries) == 0 {
+		return
+	}
+
+	newEntries := make(Entries, 0, len(*entries))
+
+	for i, entry := range *entries {
+		if comment, ok := entry.(*Comment); ok {
+			// Check if next entry exists and is immediately adjacent
+			if i+1 < len(*entries) {
+				nextEntry := (*entries)[i+1]
+				if isImmediatelyAdjacent(comment, nextEntry) {
+					// Attach comment to next entry
+					attachComment(comment, nextEntry)
+					continue // Skip adding as standalone
+				}
+			}
+			// Keep as detached comment
+			newEntries = append(newEntries, entry)
+		} else {
+			// Non-comment entry, add it
+			newEntries = append(newEntries, entry)
+		}
+	}
+
+	*entries = newEntries
+}
+
+// isImmediatelyAdjacent determines if two entries are immediately adjacent to each other
+func isImmediatelyAdjacent(first Entry, second Entry) bool {
+	// Since the lexer already separates comments by blank lines,
+	// if two entries are consecutive in the parsed list and their
+	// line positions are exactly adjacent, they're immediately adjacent
+	firstLine := first.Position().Line
+	secondLine := second.Position().Line
+
+	// Only consider entries adjacent if they are on consecutive lines (no blank lines between)
+	// This means the second entry should start exactly on the line after the first entry ends
+	return secondLine-firstLine == 1
+}
+
+// attachComment attaches a comment to a block or attribute
+func attachComment(comment *Comment, entry Entry) {
+	switch e := entry.(type) {
+	case *Block:
+		e.Comments = append(e.Comments, comment.Comments...)
+	case *Attribute:
+		e.Comments = append(e.Comments, comment.Comments...)
+	}
 }
 
 func detachEntry(parent Node, entry Entry) bool {
