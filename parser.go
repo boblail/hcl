@@ -729,15 +729,13 @@ func (config *parseConfig) postProccessAST(hcl *AST) (*AST, error) {
 // populateAttachedComments moves immediately adjacent comments to their following entries.
 // Comments that immediately precede a block/attribute (without blank lines) are "attached" and
 // should be moved to the Comments field of that block/attribute. Comments separated by blank lines
-// remain as standalone Comment entries.
+// remain as standalone ("detached") Comment entries.
 func populateAttachedComments(ast *AST) error {
 	populateAttachedCommentsInEntries(&ast.Entries)
 
-	return Visit(ast, func(node Node, next func() error) error {
-		if block, ok := node.(*Block); ok {
-			populateAttachedCommentsInEntries(&block.Body)
-		}
-		return next()
+	return visitBlocks(ast, func(block *Block) error {
+		populateAttachedCommentsInEntries(&block.Body)
+		return nil
 	})
 }
 
@@ -779,11 +777,9 @@ func populateAttachedCommentsInEntries(entries *Entries) {
 func populateTrailingComments(ast *AST) error {
 	populateTrailingCommentsInEntries(&ast.Entries, &ast.TrailingComments)
 
-	return Visit(ast, func(node Node, next func() error) error {
-		if block, ok := node.(*Block); ok {
-			populateTrailingCommentsInEntries(&block.Body, &block.TrailingComments)
-		}
-		return next()
+	return visitBlocks(ast, func(block *Block) error {
+		populateTrailingCommentsInEntries(&block.Body, &block.TrailingComments)
+		return nil
 	})
 }
 
@@ -809,12 +805,9 @@ func populateTrailingCommentsInEntries(entries *Entries, trailingComments *Comme
 func stripDetachedComments(ast *AST) error {
 	stripCommentsFromEntries(&ast.Entries)
 
-	// Strip comments from all blocks recursively
-	return Visit(ast, func(node Node, next func() error) error {
-		if block, ok := node.(*Block); ok {
-			stripCommentsFromEntries(&block.Body)
-		}
-		return next()
+	return visitBlocks(ast, func(block *Block) error {
+		stripCommentsFromEntries(&block.Body)
+		return nil
 	})
 }
 
@@ -827,6 +820,16 @@ func stripCommentsFromEntries(entries *Entries) {
 		}
 	}
 	*entries = filtered
+}
+
+// visitBlocks yields each block in the AST recursively.
+func visitBlocks(ast *AST, visitor func(*Block) error) error {
+	return Visit(ast, func(node Node, next func() error) error {
+		if block, ok := node.(*Block); ok {
+			visitor(block)
+		}
+		return next()
+	})
 }
 
 func cloneStrings(strings []string) []string {
