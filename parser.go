@@ -762,12 +762,9 @@ func populateAttachedCommentsInEntries(entries *Entries) {
 					continue // Skip adding as standalone
 				}
 			}
-			// Keep as detached comment
-			newEntries = append(newEntries, entry)
-		} else {
-			// Non-comment entry, add it
-			newEntries = append(newEntries, entry)
 		}
+
+		newEntries = append(newEntries, entry)
 	}
 
 	*entries = newEntries
